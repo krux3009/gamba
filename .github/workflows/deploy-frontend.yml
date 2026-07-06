@@ -1,0 +1,36 @@
+# Build the SPA and FTP it to the Hostinger subdomain docroot on every push.
+# Secrets: HOSTINGER_FTP_HOST / HOSTINGER_FTP_USER / HOSTINGER_FTP_PASSWORD /
+#          HOSTINGER_SITE_DIR (the docroot hPanel assigned to gamba.kruxqlyz.com,
+#          home-relative — the FTP account chroots to its home dir).
+# Variable: GAMBA_API_URL (e.g. https://gamba-api.onrender.com)
+name: deploy-frontend
+
+on:
+  push:
+    branches: [main]
+    paths: ["frontend/**", ".github/workflows/deploy-frontend.yml"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ vars.GAMBA_API_URL }}
+      - uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          local-dir: frontend/dist/
+          server-dir: ${{ secrets.HOSTINGER_SITE_DIR }}

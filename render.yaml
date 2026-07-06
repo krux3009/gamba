@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: gamba-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: REFRESH_KEY
+        sync: false
+      - key: ALLOWED_ORIGIN
+        sync: false
+      # The Odds API — same key as pitchside; the WC sweeps there self-stop
+      # after the final, freeing the shared 500 credits/month pool.
+      - key: ODDS_API_KEY
+        sync: false
+      # Hostinger FTP — account-blob durability (store.py). Same creds as the
+      # pitchside publish secrets.
+      - key: HOSTINGER_FTP_HOST
+        sync: false
+      - key: HOSTINGER_FTP_USER
+        sync: false
+      - key: HOSTINGER_FTP_PASSWORD
+        sync: false
+      # Keep on the staging dir until cutover; flip to gamba_accounts after the
+      # WC final so restore() adopts the live pitchside blobs.
+      - key: HOSTINGER_GAMBA_DIR
+        sync: false

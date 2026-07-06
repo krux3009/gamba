@@ -1,0 +1,700 @@
+/* GAMBA — "paper betting slip" aesthetic. Warm paper stock, ink-navy type,
+   rubber-stamp red, monospace tabular numerals, dashed tear-off borders.
+   Neon-sportsbook is the forbidden casino look; paper tickets read as
+   board-game money. */
+
+/* ---- base (standalone site: the reset lives here) ---- */
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: #fff3e1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a { color: inherit; text-decoration: none; }
+.container { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+:focus-visible {
+  outline: 2px solid #fa2d1a;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.gamba {
+  /* 3-color scheme: YInMn Blue #2E4C8C · Old Lace #FFF3E1 · Red #FA2D1A.
+     Ink prints blue, paper is old lace, stamps hit in red. Two functional
+     accents deliberately kept outside the palette: marker-yellow (strap +
+     balance chip) and win-green (WON stamps) — win vs lose must never share
+     a hue with the decorative accent. */
+  --g-paper: #fff3e1;
+  --g-paper-dim: color-mix(in srgb, var(--g-ink) 7%, var(--g-paper));
+  --g-ink: #2e4c8c;
+  --g-ink-soft: color-mix(in srgb, var(--g-ink) 78%, var(--g-paper));
+  --g-stamp: #fa2d1a;
+  --g-win: #1f7a4d;
+  --g-void: color-mix(in srgb, var(--g-ink) 55%, var(--g-paper));
+  --g-marker: #ffd84d;
+  --g-line: color-mix(in srgb, var(--g-ink) 26%, var(--g-paper));
+  --g-font-mono: "IBM Plex Mono", "Menlo", "Courier New", monospace;
+
+  min-height: 100dvh;
+  background: var(--g-paper);
+  color: var(--g-ink);
+  font-family: var(--g-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- header: receipt masthead ---- */
+.gamba-header {
+  border-bottom: 2px dashed var(--g-line);
+  background: var(--g-paper);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.gamba-header__inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 54px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.gamba-brand {
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: 4px;
+  white-space: nowrap;
+}
+.gamba-brand .dice { font-size: 16px; }
+.gamba-header__nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.gamba-tab {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--g-ink-soft);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.gamba-tab:hover { color: var(--g-ink); }
+.gamba-tab.active {
+  color: var(--g-ink);
+  border: 1px dashed var(--g-ink);
+  background: var(--g-paper-dim);
+}
+.gamba-chip {
+  font-weight: 700;
+  font-size: 14px;
+  padding: 5px 12px;
+  border: 2px solid var(--g-ink);
+  border-radius: 3px;
+  background: var(--g-marker);
+  white-space: nowrap;
+  box-shadow: 2px 2px 0 var(--g-ink);
+}
+/* fixed twin of the balance chip (Layout renders it only while the masthead is
+   scrolled out of view — phones only in practice, the desktop header is
+   sticky). z 55: above day headers and the bet sheet, under the settlement
+   toasts, which may briefly stamp over it. */
+.gamba-chip--float {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 55;
+  animation: g-chip-drop 160ms ease-out;
+}
+@keyframes g-chip-drop {
+  from { transform: translateY(-8px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.lang-toggle {
+  flex-shrink: 0;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 5px 10px;
+  background: none;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--g-ink-soft);
+  border: 1px solid var(--g-line);
+}
+.lang-toggle:hover { color: var(--g-ink); border-color: var(--g-ink-soft); }
+
+/* ---- permanent play-money strap ---- */
+.gamba-strap {
+  background: var(--g-marker);
+  border-bottom: 2px solid var(--g-ink);
+  color: var(--g-ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  text-align: center;
+  padding: 6px 12px;
+}
+
+/* ---- receipt/paper cards ---- */
+.g-card {
+  background: #fffaf0;
+  border: 1px solid var(--g-line);
+  border-radius: 3px;
+  padding: 14px;
+  box-shadow: 2px 3px 0 rgba(46, 76, 140, 0.08);
+}
+.g-h {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--g-ink-soft);
+  margin: 26px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.g-h::after { content: ""; flex: 1; border-top: 2px dashed var(--g-line); }
+
+.gamba-page-title {
+  font-size: clamp(24px, 5vw, 32px);
+  font-weight: 700;
+  letter-spacing: 2px;
+  margin: 26px 0 4px;
+  text-transform: uppercase;
+}
+.gamba-sub { color: var(--g-ink-soft); font-size: 13px; margin: 0 0 10px; }
+
+/* ---- competition filter pills ---- */
+.g-comps { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 4px; }
+.g-comp {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  background: var(--g-paper-dim);
+  border: 1px solid var(--g-line);
+  border-radius: 999px;
+  color: var(--g-ink-soft);
+  cursor: pointer;
+}
+.g-comp:hover { border-color: var(--g-ink-soft); color: var(--g-ink); }
+.g-comp.on {
+  color: var(--g-ink);
+  border: 1px dashed var(--g-ink);
+  background: var(--g-marker);
+}
+
+/* ---- board layout: card list + sticky slip rail ---- */
+.gamba-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+.gamba-board__rail { position: sticky; top: 106px; }
+
+/* ---- market card ---- */
+.g-match { margin-bottom: 14px; }
+.g-match__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--g-line);
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+}
+.g-match__teams { font-size: 15px; font-weight: 700; }
+.g-match__meta { font-size: 11.5px; color: var(--g-ink-soft); }
+.g-market { margin: 10px 0 2px; }
+.g-market__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--g-ink-soft);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.g-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  border: 1px solid var(--g-ink-soft);
+  border-radius: 2px;
+  padding: 1px 6px;
+  color: var(--g-ink-soft);
+  text-transform: uppercase;
+}
+.g-prices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 6px;
+}
+.g-price {
+  font: inherit;
+  text-align: center;
+  padding: 7px 6px 6px;
+  background: #fffaf0;
+  border: 1px solid var(--g-line);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.g-price:hover { border-color: var(--g-ink-soft); transform: translateY(-1px); }
+.g-price.on {
+  border: 2px solid var(--g-stamp);
+  background: color-mix(in srgb, var(--g-stamp) 7%, #fffaf0);
+}
+.g-price__sel {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--g-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.g-price__odds { display: block; font-size: 16px; font-weight: 700; }
+.g-price__real { display: block; font-size: 10px; color: var(--g-ink-soft); }
+.g-price:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+.g-locked {
+  color: var(--g-ink-soft);
+  font-size: 12.5px;
+  border: 1px dashed var(--g-line);
+  padding: 10px 12px;
+  text-align: center;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* ---- bet slip: sticky receipt ---- */
+.g-slip {
+  position: relative;
+  background: #fffaf0;
+  border: 1px solid var(--g-line);
+  border-radius: 3px 3px 0 0;
+  box-shadow: 2px 3px 0 rgba(46, 76, 140, 0.08);
+  padding: 14px 14px 10px;
+}
+/* sheet-only affordances; desktop rail hides them */
+.g-slip__grab { display: none; }
+.g-slip__dragzone { display: none; }
+.g-slip--min { display: none; }
+.g-slip__title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  text-align: center;
+  border-bottom: 2px dashed var(--g-line);
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+}
+.g-slip__pick { font-size: 13.5px; font-weight: 700; margin-bottom: 2px; }
+.g-slip__match { font-size: 11.5px; color: var(--g-ink-soft); margin-bottom: 10px; }
+.g-slip__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+.g-slip__row dt { color: var(--g-ink-soft); letter-spacing: 0.5px; }
+.g-slip__row dd { margin: 0; font-weight: 700; }
+.g-slip__rows { margin: 10px 0; border-top: 1px solid var(--g-line); padding-top: 8px; }
+.g-stake {
+  width: 100%;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 8px 10px;
+  border: 1px solid var(--g-ink-soft);
+  border-radius: 3px;
+  background: var(--g-paper);
+  color: var(--g-ink);
+}
+.g-stake:focus { outline: 2px solid var(--g-stamp); }
+.g-chips { display: flex; gap: 6px; margin-top: 6px; }
+.g-chipbtn {
+  flex: 1;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 0;
+  background: var(--g-paper-dim);
+  border: 1px solid var(--g-line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.g-chipbtn:hover { border-color: var(--g-ink-soft); }
+.g-place {
+  width: 100%;
+  margin-top: 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 11px 0;
+  color: var(--g-paper);
+  background: var(--g-ink);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  position: relative;
+}
+.g-place:hover:not(:disabled) { background: #253f75; }
+.g-place:disabled { opacity: 0.4; cursor: not-allowed; }
+/* perforation under the place button — tear here */
+.g-slip__perf {
+  margin: 12px -14px 0;
+  border-top: 2px dashed var(--g-line);
+  position: relative;
+  height: 10px;
+}
+.g-slip__perf::before,
+.g-slip__perf::after {
+  content: "";
+  position: absolute;
+  top: -7px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--g-paper);
+  border: 1px solid var(--g-line);
+}
+.g-slip__perf::before { left: -7px; }
+.g-slip__perf::after { right: -7px; }
+.g-slip__empty {
+  color: var(--g-ink-soft);
+  font-size: 12.5px;
+  text-align: center;
+  padding: 18px 6px;
+}
+.g-slip__err { color: var(--g-stamp); font-size: 12px; margin-top: 8px; }
+
+/* ---- ticket stubs (My bets) ---- */
+.g-ticket {
+  position: relative;
+  background: #fffaf0;
+  border: 1px solid var(--g-line);
+  border-radius: 3px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.g-ticket__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--g-ink-soft);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border-bottom: 1px dashed var(--g-line);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+.g-ticket__pick { font-size: 14px; font-weight: 700; }
+.g-ticket__match { font-size: 12px; color: var(--g-ink-soft); margin: 2px 0 8px; }
+.g-ticket__nums {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.g-ticket__nums .lbl { color: var(--g-ink-soft); font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase; display: block; }
+.g-ticket__nums .val { font-weight: 700; }
+.g-stamp {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%) rotate(-12deg);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  padding: 3px 12px;
+  border: 3px solid currentColor;
+  border-radius: 4px;
+  opacity: 0.85;
+  pointer-events: none;
+}
+.g-stamp--won { color: var(--g-win); }
+.g-stamp--lost { color: var(--g-stamp); }
+.g-stamp--void { color: var(--g-void); }
+.g-ticket--settled .g-ticket__pick,
+.g-ticket--settled .g-ticket__nums { opacity: 0.75; }
+
+/* ---- stats strip (My bets) ---- */
+.g-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.g-stat {
+  border: 1px solid var(--g-line);
+  background: #fffaf0;
+  border-radius: 3px;
+  padding: 10px 12px;
+}
+.g-stat .lbl {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--g-ink-soft);
+}
+.g-stat .val { font-size: 18px; font-weight: 700; }
+.g-stat .val.neg { color: var(--g-stamp); }
+.g-stat .val.pos { color: var(--g-win); }
+
+.g-btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 8px 14px;
+  background: var(--g-paper-dim);
+  border: 1px solid var(--g-ink-soft);
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--g-ink);
+}
+.g-btn:hover { background: var(--g-marker); }
+.g-btn--danger { border-color: var(--g-stamp); color: var(--g-stamp); }
+.g-btn--danger:hover { background: color-mix(in srgb, var(--g-stamp) 10%, var(--g-paper-dim)); }
+.g-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---- cross-device sync card (My bets) ---- */
+.g-sync {
+  border: 1px solid var(--g-line);
+  background: #fffaf0;
+  border-radius: 3px;
+  padding: 10px 12px;
+  margin: 10px 0 4px;
+}
+.g-sync__head { display: flex; align-items: center; gap: 8px; }
+.g-sync__head .lbl {
+  font-size: 10.5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--g-ink-soft);
+}
+.g-sync__dot { width: 8px; height: 8px; border-radius: 50%; }
+.g-sync__dot--ok { background: var(--g-win); }
+.g-sync__dot--pending { background: var(--g-marker); }
+.g-sync__dot--err { background: var(--g-stamp); }
+.g-sync__status { font-size: 12px; color: var(--g-ink-soft); }
+.g-sync__blurb { font-size: 12.5px; color: var(--g-ink-soft); margin: 6px 0 8px; }
+.g-sync__code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  margin: 6px 0 8px;
+  user-select: all;
+}
+.g-sync__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.g-sync__or { font-size: 12.5px; color: var(--g-ink-soft); }
+.g-sync__input {
+  font: inherit;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid var(--g-ink-soft);
+  border-radius: 3px;
+  background: var(--g-paper-dim);
+  color: var(--g-ink);
+  width: 172px;
+  text-transform: uppercase;
+}
+.g-sync__err { font-size: 12.5px; color: var(--g-stamp); margin: 6px 0 0; }
+
+/* ---- footer ---- */
+.gamba-footer {
+  border-top: 2px dashed var(--g-line);
+  margin-top: 40px;
+  padding: 16px 0 90px;
+  font-size: 12px;
+  color: var(--g-ink-soft);
+}
+
+/* ---- settlement toast: a stamp slams in ---- */
+.g-toasts {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(420px, calc(100vw - 24px));
+}
+.g-toast {
+  background: #fffaf0;
+  border: 2px solid var(--g-ink);
+  border-radius: 3px;
+  box-shadow: 3px 4px 0 rgba(46, 76, 140, 0.25);
+  padding: 10px 14px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: g-slam 220ms ease-out;
+}
+@keyframes g-slam {
+  0% { transform: scale(1.2) rotate(-3deg); opacity: 0; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+.g-toast .g-stamp {
+  position: static;
+  transform: rotate(-8deg);
+  font-size: 13px;
+  padding: 1px 7px;
+  border-width: 2px;
+  flex-shrink: 0;
+}
+
+/* ---- responsive: slip becomes a bottom sheet ---- */
+@media (max-width: 900px) {
+  /* header scrolls away on phones: content first, and it frees top: 0 for
+     the sticky day headers below */
+  .gamba-header { position: static; }
+  .gamba-board { grid-template-columns: 1fr; }
+  .gamba-board__rail {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    z-index: 50;
+  }
+  .gamba-board__rail .g-slip {
+    max-height: 62dvh;
+    overflow-y: auto;
+    /* clip sideways: the perforation notches bleed past the padding box and
+       would otherwise give the sheet a loose horizontal pan */
+    overflow-x: hidden;
+    touch-action: pan-y;
+    border-radius: 10px 10px 0 0;
+    box-shadow: 0 -8px 24px rgba(46, 76, 140, 0.25);
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    animation: g-sheet-up 200ms ease-out;
+    transition: transform 200ms ease;
+  }
+  /* empty slip stays out of the way; it only docks as a slim bar when it has
+     something to say (ticket-printed flash) or offer (the daily drip) */
+  .gamba-board__rail .g-slip--empty { display: none; }
+  .gamba-board__rail .g-slip--empty.is-printed,
+  .gamba-board__rail .g-slip--empty.has-drip { display: block; animation: none; }
+  .gamba-board__rail .g-slip--empty .g-slip__title,
+  .gamba-board__rail .g-slip--empty .g-slip__fine { display: none; }
+  .gamba-board__rail .g-slip--empty .g-slip__empty { padding: 8px 6px; }
+  .g-slip__grab {
+    display: block;
+    width: 44px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--g-line);
+    margin: 0 auto;
+  }
+  /* generous drag strip around the grab bar: drag down (or tap) to minimize */
+  .g-slip__dragzone {
+    display: block;
+    width: calc(100% + 28px);
+    margin: -10px -14px 2px;
+    padding: 10px 0;
+    background: none;
+    border: none;
+    cursor: grab;
+    touch-action: none;
+  }
+  /* minimized sheet: a slim docked bar keeping the ticket alive */
+  .gamba-board__rail .g-slip--min {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    font: inherit;
+    color: var(--g-ink);
+    text-align: left;
+    cursor: pointer;
+    border: 1px solid var(--g-line);
+    padding: 16px 14px calc(12px + env(safe-area-inset-bottom));
+    animation: none;
+  }
+  .g-slip--min .g-slip__grab {
+    position: absolute;
+    top: 5px;
+    left: 50%;
+    transform: translateX(-50%);
+    margin: 0;
+  }
+  .g-slip__minpick {
+    font-size: 13px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .g-slip__mincue {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--g-ink-soft);
+  }
+  /* day headers pin to the top while that day's cards scroll under them */
+  .gamba-board .g-h {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--g-paper);
+    margin-top: 18px;
+    padding: 8px 0;
+  }
+  /* toasts move up top so they never sit on the sheet's place button */
+  .g-toasts { bottom: auto; top: 12px; }
+}
+@keyframes g-sheet-up {
+  from { transform: translateY(24px); opacity: 0.6; }
+  to { transform: none; opacity: 1; }
+}
+@media (max-width: 560px) {
+  .gamba-brand { font-size: 17px; letter-spacing: 3px; }
+  .gamba-header__inner { gap: 10px; min-height: 46px; }
+  .gamba-header__nav { gap: 2px; }
+  .gamba-tab {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 10px;
+    font-size: 12.5px;
+  }
+  .gamba-strap { font-size: 10.5px; padding: 4px 10px; letter-spacing: 1px; }
+  .lang-toggle { padding: 5px 9px; font-size: 12px; }
+  /* 2 buttons -> 2 cols, 3 buttons -> 3 cols; no empty third track */
+  .g-prices { grid-template-columns: repeat(auto-fit, minmax(31%, 1fr)); gap: 8px; }
+  .g-price { padding: 10px 6px; min-height: 48px; }
+  .g-price__sel { white-space: normal; line-height: 1.25; }
+  .g-chipbtn { padding: 10px 0; }
+  .g-stamp { font-size: 15px; right: 10px; }
+}

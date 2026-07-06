@@ -1,0 +1,18 @@
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+
+import Layout from "./components/Layout";
+import Bets from "./pages/Bets";
+import Board from "./pages/Board";
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/" element={<Board />} />
+          <Route path="/bets" element={<Bets />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
+}
