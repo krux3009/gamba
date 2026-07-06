@@ -61,7 +61,7 @@ def test_ingest_moved_kickoff_updates_in_place(conn):
     refresh.ingest_scoreboard(conn, "eng.1", {"events": [
         _event(700001, date="2026-08-17T19:00Z")]})
     assert conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"] == 1
-    assert _row(conn, 700001)["kickoff_utc"] == "2026-08-17T19:00Z"
+    assert _row(conn, 700001)["kickoff_utc"] == "2026-08-17T19:00:00Z"
 
 
 def test_ingest_malformed_event_skipped(conn):

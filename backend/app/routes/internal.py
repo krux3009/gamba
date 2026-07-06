@@ -5,7 +5,8 @@ import threading
 from fastapi import APIRouter, HTTPException, Query
 
 from .. import db, store
-from ..config import REFRESH_KEY
+from ..config import COMPETITIONS, REFRESH_KEY
+from ..fetch import odds_api
 from ..fetch import refresh as refresh_orchestrator
 
 router = APIRouter()
@@ -55,6 +56,22 @@ def refresh(key: str = "", async_: int = Query(0, alias="async")):
         return {"started": True}
     report = refresh_locked()
     return report if report is not None else {"skipped": "cycle already running"}
+
+
+@router.get("/api/internal/odds")
+def odds_sweep(key: str = ""):
+    """Manual odds sweep, bypassing the 12h gate and the 8-day-upcoming skip
+    (but never the credit floor). Ops tool: verify the pipeline the moment
+    books start quoting, without waiting for the scheduled pass."""
+    _check(key)
+    conn = db.connect()
+    try:
+        report = {}
+        for slug, cfg in COMPETITIONS.items():
+            report[slug] = odds_api.sweep(conn, slug, cfg["odds_key"])
+        return report
+    finally:
+        conn.close()
 
 
 @router.get("/api/internal/restore")

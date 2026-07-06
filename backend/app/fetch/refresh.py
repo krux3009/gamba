@@ -12,8 +12,8 @@ pass — lands with PR3.
 """
 from datetime import datetime, timedelta, timezone
 
-from ..config import COMPETITIONS
-from . import espn
+from ..config import COMPETITIONS, ODDS_REFRESH_HOURS
+from . import espn, odds_api
 
 FIXTURE_HORIZON_DAYS = 14
 FIXTURE_REFRESH_HOURS = 24
@@ -56,6 +56,12 @@ def ingest_scoreboard(conn, slug: str, payload: dict) -> int:
     n = 0
     for event in payload.get("events", []):
         try:
+            # normalize ESPN's "2026-08-15T14:00Z" to full seconds form — every
+            # kickoff comparison in the app (BETWEEN windows, btts horizon) is a
+            # string compare, so one canonical format keeps them all honest
+            kickoff = datetime.fromisoformat(
+                event["date"].replace("Z", "+00:00")
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
             comp = event["competitions"][0]
             sides = {c["homeAway"]: c for c in comp["competitors"]}
             home, away = sides["home"], sides["away"]
@@ -81,7 +87,7 @@ def ingest_scoreboard(conn, slug: str, payload: dict) -> int:
                 (int(event["id"]), sport, slug,
                  home["team"]["displayName"], away["team"]["displayName"],
                  str(home["team"]["id"]), str(away["team"]["id"]),
-                 event["date"],
+                 kickoff,
                  status,
                  int(home["score"]) if started and home.get("score") is not None else None,
                  int(away["score"]) if started and away.get("score") is not None else None),
@@ -137,7 +143,20 @@ def run(conn) -> dict:
             if payload is not None:
                 entry.setdefault("stale", 0)
                 entry["stale"] += ingest_scoreboard(conn, slug, payload)
-        # 4. PR3: odds sweep slots in here (meta-gated at ODDS_REFRESH_HOURS)
+        # 4. odds sweep: meta-gated to 2/day per competition, skipped entirely
+        # when nothing is bettable within 8 days (international breaks and the
+        # off-season cost zero credits)
+        has_upcoming = conn.execute(
+            """SELECT 1 FROM events
+               WHERE competition = ? AND status = 'SCHEDULED'
+                 AND datetime(kickoff_utc) <= datetime('now', '+8 days')
+                 AND datetime(kickoff_utc) >= datetime('now')
+               LIMIT 1""", (slug,)).fetchone() is not None
+        if (odds_api.enabled() and has_upcoming
+                and _stale(conn, f"last_fetch:odds:{slug}", ODDS_REFRESH_HOURS)):
+            entry["odds"] = odds_api.sweep(
+                conn, slug, COMPETITIONS[slug]["odds_key"])
+            _stamp(conn, f"last_fetch:odds:{slug}")
         report[slug] = entry
     _stamp(conn, "last_refresh")
     return report
