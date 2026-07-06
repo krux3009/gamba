@@ -72,3 +72,20 @@ untouched except a future "moved" banner.
 Esports (Valorant/CS2): research spike FIRST — free odds+results source
 unverified (The Odds API esports coverage doubtful; PandaScore/Abios quotas
 unknown). Schema already carries sport/format/no-draw capability.
+
+## Suggested skills for next session
+
+- `deep-research` or `web-search-agent` — the esports spike: verify free
+  Valorant/CS2 odds + results sources (The Odds API `/v4/sports` esports keys,
+  PandaScore/Abios free-tier quotas) BEFORE any code.
+- `verify` — after the cutover env flip: drive the live site, link a real
+  sync code, confirm balance parity with old pitchside gamba.
+- `code-review` — the whole repo shipped in one session; a fresh-eyes pass
+  over `fetch/odds_api.py` (budget math) and `store.py` (cutover path) is
+  cheap insurance before real accounts migrate.
+- First real-odds week (~Aug 7+): check `report["unmatched"]` from sweeps and
+  grow `odds_api.ALIASES`; watch `meta odds_api:remaining` vs the ~316cr/mo
+  model.
+
+*(Session ended 2026-07-06 evening. Cron pinger + key-check curl were
+instructed to the user but not confirmed done — ask before assuming.)*
