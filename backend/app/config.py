@@ -22,9 +22,12 @@ ALLOWED_ORIGINS = [
 # the events table); odds_key = The Odds API sport key. Adding a competition
 # is one line here — fixtures, scores, and odds all key off this dict.
 COMPETITIONS = {
-    "eng.1": {"sport": "soccer", "odds_key": "soccer_epl", "label": "Premier League"},
-    "esp.1": {"sport": "soccer", "odds_key": "soccer_spain_la_liga", "label": "La Liga"},
-    # Sept: "uefa.champions": {"sport": "soccer", "odds_key": "soccer_uefa_champs_league", "label": "Champions League"},
+    "eng.1": {"sport": "soccer", "odds_key": "soccer_epl"},
+    "esp.1": {"sport": "soccer", "odds_key": "soccer_spain_la_liga"},
+    # Sept: "uefa.champions": {"sport": "soccer", "odds_key": "soccer_uefa_champs_league"},
+    # ^ before enabling: the flat ALIASES map in fetch/odds_api.py can't handle
+    #   UCL's multilingual club names (Inter/Internazionale, Bayern/München…) —
+    #   build a per-competition alias table first or marquee ties show no odds.
 }
 
 # Hostinger FTP — account-blob durability (store.py). Home-relative and

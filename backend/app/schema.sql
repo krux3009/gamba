@@ -17,8 +17,7 @@ CREATE TABLE IF NOT EXISTS events (
   kickoff_utc   TEXT NOT NULL,
   status        TEXT DEFAULT 'SCHEDULED',   -- 'SCHEDULED'|'LIVE'|'FT'|'CANCELED'
   home_score    INTEGER,                    -- soccer: FT score (leagues have no
-  away_score    INTEGER,                    -- extra time); esports later: maps won
-  format        TEXT                        -- NULL for soccer; 'bo1'/'bo3'/'bo5'
+  away_score    INTEGER                     -- extra time); esports later: maps won
 );
 CREATE INDEX IF NOT EXISTS idx_events_kickoff ON events(kickoff_utc);
 

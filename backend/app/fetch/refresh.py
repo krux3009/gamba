@@ -54,10 +54,12 @@ def ingest_scoreboard(conn, slug: str, payload: dict) -> int:
         try:
             # normalize ESPN's "2026-08-15T14:00Z" to full seconds form — every
             # kickoff comparison in the app (BETWEEN windows, btts horizon) is a
-            # string compare, so one canonical format keeps them all honest
-            kickoff = datetime.fromisoformat(
-                event["date"].replace("Z", "+00:00")
-            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            # string compare, so one canonical format keeps them all honest.
+            # astimezone guards a non-UTC offset ever appearing in the feed:
+            # stamping local wall-clock + 'Z' would skew every window
+            kickoff = (datetime.fromisoformat(event["date"])
+                       .astimezone(timezone.utc)
+                       .strftime("%Y-%m-%dT%H:%M:%SZ"))
             comp = event["competitions"][0]
             sides = {c["homeAway"]: c for c in comp["competitors"]}
             home, away = sides["home"], sides["away"]

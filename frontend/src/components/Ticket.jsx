@@ -1,4 +1,5 @@
 import { fmtG, selectionText } from "../lib/engine";
+import { localKickoff } from "../lib/format";
 import { useLang } from "../lib/i18n";
 
 // One bet as a paper ticket stub. Settled stubs get a rotated rubber stamp.
@@ -11,9 +12,7 @@ export default function Ticket({ bet }) {
         <span>{t(`gamba.market.${bet.market}`)}
           {bet.oddsSource === "real" ? ` · ${t("gamba.market.realBook")}` : ""}
         </span>
-        <span>{new Date(bet.placedAt).toLocaleString(dateLocale, {
-          month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-        })}</span>
+        <span>{localKickoff(bet.placedAt, dateLocale)}</span>
       </div>
       <div className="g-ticket__pick">
         {selectionText(bet, t)} @ {bet.price.toFixed(2)}

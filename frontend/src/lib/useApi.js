@@ -12,7 +12,14 @@ export function useApi(path, { pollMs } = {}) {
     let alive = true;
     const load = (bypassCache = false) =>
       apiGet(path, { bypassCache })
-        .then((data) => alive && setState({ data, loading: false, error: null }))
+        .then((data) =>
+          alive &&
+          setState((s) =>
+            // polls usually return byte-identical docs (generated_at is the
+            // server's refresh stamp) — keep the old object so nothing re-renders
+            s.data && JSON.stringify(s.data) === JSON.stringify(data)
+              ? s
+              : { data, loading: false, error: null }))
         .catch((error) =>
           alive && setState((s) => (s.data ? s : { data: null, loading: false, error })));
 

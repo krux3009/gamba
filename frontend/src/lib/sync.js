@@ -23,7 +23,7 @@
 // The blob shape {bets, drips, resetAt, carry, onboardingSeen} is FROZEN: it
 // is the migration contract with the accounts pitchside mirrored to FTP.
 
-import { API_BASE } from "./api";
+import { request } from "./api";
 
 // ---- codes --------------------------------------------------------------------
 
@@ -107,26 +107,14 @@ export function merge(a, b) {
 
 // ---- server ---------------------------------------------------------------------
 
-// 25s timeout matches api.js's cold-start tolerance; no retry loops, the 60s
-// poll in GambaContext is the retry.
+// request() comes from api.js (same 25s cold-start timeout); no retry loops,
+// the 60s poll in GambaContext is the retry.
 //
 // The sync code travels in the X-Sync-Code header, never the URL path — it is
 // the sole credential, and path segments land verbatim in server access logs.
 
-function req(path, opts = {}) {
-  const headers = {
-    ...(opts.body ? { "Content-Type": "application/json" } : {}),
-    ...(opts.headers || {}),
-  };
-  return fetch(`${API_BASE}${path}`, {
-    signal: AbortSignal.timeout(25_000),
-    ...opts,
-    headers,
-  });
-}
-
 export async function mintAccount(state) {
-  const res = await req("/api/accounts", {
+  const res = await request("/api/accounts", {
     method: "POST",
     body: JSON.stringify({ state }),
   });
@@ -137,7 +125,7 @@ export async function mintAccount(state) {
 // -> {rev, state} | "notFound" (404 is expected while a fresh deploy is still
 // restoring accounts from FTP — the caller treats it as transient)
 export async function fetchAccount(code) {
-  const res = await req("/api/accounts/me", {
+  const res = await request("/api/accounts/me", {
     headers: { "X-Sync-Code": normalizeCode(code) },
   });
   if (res.status === 404) return "notFound";
@@ -147,7 +135,7 @@ export async function fetchAccount(code) {
 
 // -> {rev} on success | {conflict: {rev, state}} on a lost CAS race
 export async function pushAccount(code, rev, state) {
-  const res = await req("/api/accounts/me", {
+  const res = await request("/api/accounts/me", {
     method: "PUT",
     headers: { "X-Sync-Code": normalizeCode(code) },
     body: JSON.stringify({ rev, state }),
