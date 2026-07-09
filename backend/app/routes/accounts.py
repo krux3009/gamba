@@ -6,21 +6,25 @@ settlement, merging, and balance math all live client-side
 the security: 10 symbols of a 31-char alphabet ≈ 2^49.6, unguessable at any
 rate this instance can serve — the right trust level for Monopoly money.
 
-Protocol and code format are pitchside's gamba store unchanged (only the path
-moved, /api/gamba/accounts -> /api/accounts): existing GB- codes keep working,
-and the FTP blobs pitchside mirrored restore here verbatim.
+Protocol and code format are pitchside's gamba store unchanged: existing GB-
+codes keep working, and the FTP blobs pitchside mirrored restore here verbatim.
 
-POST /api/accounts        {state}      -> 201 {code, rev: 1}
-GET  /api/accounts/{code}              -> {rev, state} | 404
-PUT  /api/accounts/{code} {rev, state} -> {rev} | 409 {rev, state} | 404
+POST /api/accounts     {state}                       -> 201 {code, rev: 1}
+GET  /api/accounts/me  X-Sync-Code: <code>           -> {rev, state} | 404
+PUT  /api/accounts/me  X-Sync-Code + {rev, state}    -> {rev} | 409 {rev, state} | 404
+
+The code travels in a header, never the URL path: the code is the SOLE
+credential, and path segments land verbatim in uvicorn/Render access logs.
+The old /api/accounts/{code} path routes remain for SPAs cached before the
+header form shipped — drop them once those clients roll over.
 """
 import json
 import secrets
 import sqlite3
 import time
-from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 
 from .. import db, store
 
@@ -49,10 +53,6 @@ def _display(code: str) -> str:
 def _normalize(raw: str) -> str:
     """Forgiving input: dashes, spaces, lowercase all resolve to the compact PK."""
     return "".join(c for c in raw.upper() if c.isalnum())
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _client_ip(request: Request) -> str:
@@ -100,10 +100,12 @@ def _state_json(body: dict) -> str:
     return state_json
 
 
-@router.post("/api/accounts", status_code=201)
-async def mint(request: Request):
-    _throttle_mint(request)
-    state_json = _state_json(await _read_body(request))
+# All sqlite work below runs in sync helpers dispatched to the threadpool
+# (async-route bodies run ON the event loop — a 5s busy_timeout wait there
+# would freeze every other request on this single free-tier instance).
+
+
+def _mint_sync(state_json: str) -> dict:
     conn = db.connect()
     try:
         n = conn.execute("SELECT COUNT(*) AS n FROM gamba_accounts").fetchone()["n"]
@@ -115,7 +117,7 @@ async def mint(request: Request):
                 conn.execute(
                     "INSERT INTO gamba_accounts (code, rev, state, updated_at)"
                     " VALUES (?, 1, ?, ?)",
-                    (code, state_json, _now()),
+                    (code, state_json, db.utc_now_z()),
                 )
                 conn.commit()
                 break
@@ -129,13 +131,11 @@ async def mint(request: Request):
     return {"code": _display(code), "rev": 1}
 
 
-@router.get("/api/accounts/{code}")
-def fetch(code: str):
+def _fetch_sync(code: str) -> dict:
     conn = db.connect()
     try:
         row = conn.execute(
-            "SELECT rev, state FROM gamba_accounts WHERE code = ?",
-            (_normalize(code),),
+            "SELECT rev, state FROM gamba_accounts WHERE code = ?", (code,)
         ).fetchone()
     finally:
         conn.close()
@@ -144,21 +144,14 @@ def fetch(code: str):
     return {"rev": row["rev"], "state": json.loads(row["state"])}
 
 
-@router.put("/api/accounts/{code}")
-async def put(code: str, request: Request):
-    code = _normalize(code)
-    body = await _read_body(request)
-    rev = body.get("rev")
-    if not isinstance(rev, int):
-        raise HTTPException(422, "missing integer rev")
-    state_json = _state_json(body)
+def _put_sync(code: str, rev: int, state_json: str) -> dict:
     conn = db.connect()
     try:
         # compare-and-swap in one atomic statement — no read-modify-write race
         cur = conn.execute(
             "UPDATE gamba_accounts SET rev = rev + 1, state = ?, updated_at = ?"
             " WHERE code = ? AND rev = ?",
-            (state_json, _now(), code, rev),
+            (state_json, db.utc_now_z(), code, rev),
         )
         conn.commit()
         if cur.rowcount != 1:
@@ -176,3 +169,41 @@ async def put(code: str, request: Request):
         conn.close()
     store.push_async(code)
     return {"rev": rev + 1}
+
+
+async def _put(code: str, request: Request) -> dict:
+    body = await _read_body(request)
+    rev = body.get("rev")
+    if not isinstance(rev, int):
+        raise HTTPException(422, "missing integer rev")
+    state_json = _state_json(body)
+    return await run_in_threadpool(_put_sync, code, rev, state_json)
+
+
+@router.post("/api/accounts", status_code=201)
+async def mint(request: Request):
+    _throttle_mint(request)
+    state_json = _state_json(await _read_body(request))
+    return await run_in_threadpool(_mint_sync, state_json)
+
+
+# header form — registered before the {code} routes so 'me' never parses as a code
+@router.get("/api/accounts/me")
+def fetch_me(x_sync_code: str = Header("")):
+    return _fetch_sync(_normalize(x_sync_code))
+
+
+@router.put("/api/accounts/me")
+async def put_me(request: Request, x_sync_code: str = Header("")):
+    return await _put(_normalize(x_sync_code), request)
+
+
+# legacy path form — kept only for SPAs cached before the header form shipped
+@router.get("/api/accounts/{code}")
+def fetch(code: str):
+    return _fetch_sync(_normalize(code))
+
+
+@router.put("/api/accounts/{code}")
+async def put(code: str, request: Request):
+    return await _put(_normalize(code), request)

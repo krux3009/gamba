@@ -1,8 +1,29 @@
 """SQLite helpers. The database is a rebuildable cache except gamba_accounts."""
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import BASE_DIR, DB_PATH
+
+
+def utc_now_z() -> str:
+    """Canonical timestamp: second precision, literal Z suffix. Kickoff windows
+    and cache stamps are string compares, so every writer must use this format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def meta_get(conn, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def meta_set(conn, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+    conn.commit()
 
 
 def _dict_factory(cursor: sqlite3.Cursor, row: tuple) -> dict:
@@ -25,6 +46,10 @@ def bootstrap(db_path: Path | None = None) -> sqlite3.Connection:
     db_path = db_path or DB_PATH
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db_path)
+    # WAL persists in the db file: refresh-thread commits stop blocking readers
+    # (clients polling /api/events mid-ingest saw 5s busy-waits under the
+    # default rollback journal)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript((BASE_DIR / "schema.sql").read_text())
     conn.commit()
     return conn

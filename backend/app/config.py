@@ -38,6 +38,16 @@ HOSTINGER_FTP_PASSWORD = os.getenv("HOSTINGER_FTP_PASSWORD", "")
 # that shared dir is the account migration path. Keep it on a staging dir
 # ("gamba_accounts_staging") until the WC final has settled.
 HOSTINGER_GAMBA_DIR = os.getenv("HOSTINGER_GAMBA_DIR", "gamba_accounts_staging")
+# Retired dirs restore() ALSO reads (never writes). Cutover recipe: flip
+# HOSTINGER_GAMBA_DIR to "gamba_accounts" AND set this to
+# "gamba_accounts_staging" — accounts minted during the staging window are
+# adopted and re-uploaded to the primary dir instead of stranded. Unset once
+# /api/health shows the counts merged.
+HOSTINGER_GAMBA_LEGACY_DIRS = [
+    d.strip()
+    for d in os.getenv("HOSTINGER_GAMBA_LEGACY_DIRS", "").split(",")
+    if d.strip()
+]
 
 # The Odds API. Free tier = 500 credits/month shared with pitchside (whose WC
 # sweeps self-stop after the final). Budget model: 2 sweeps/day x 2 comps x 2cr

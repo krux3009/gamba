@@ -109,12 +109,19 @@ export function merge(a, b) {
 
 // 25s timeout matches api.js's cold-start tolerance; no retry loops, the 60s
 // poll in GambaContext is the retry.
+//
+// The sync code travels in the X-Sync-Code header, never the URL path — it is
+// the sole credential, and path segments land verbatim in server access logs.
 
 function req(path, opts = {}) {
+  const headers = {
+    ...(opts.body ? { "Content-Type": "application/json" } : {}),
+    ...(opts.headers || {}),
+  };
   return fetch(`${API_BASE}${path}`, {
     signal: AbortSignal.timeout(25_000),
-    ...(opts.body ? { headers: { "Content-Type": "application/json" } } : {}),
     ...opts,
+    headers,
   });
 }
 
@@ -130,7 +137,9 @@ export async function mintAccount(state) {
 // -> {rev, state} | "notFound" (404 is expected while a fresh deploy is still
 // restoring accounts from FTP — the caller treats it as transient)
 export async function fetchAccount(code) {
-  const res = await req(`/api/accounts/${normalizeCode(code)}`);
+  const res = await req("/api/accounts/me", {
+    headers: { "X-Sync-Code": normalizeCode(code) },
+  });
   if (res.status === 404) return "notFound";
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -138,8 +147,9 @@ export async function fetchAccount(code) {
 
 // -> {rev} on success | {conflict: {rev, state}} on a lost CAS race
 export async function pushAccount(code, rev, state) {
-  const res = await req(`/api/accounts/${normalizeCode(code)}`, {
+  const res = await req("/api/accounts/me", {
     method: "PUT",
+    headers: { "X-Sync-Code": normalizeCode(code) },
     body: JSON.stringify({ rev, state }),
   });
   if (res.status === 409) return { conflict: (await res.json()).detail };

@@ -173,6 +173,96 @@ def test_push_failure_retries_on_next_push(seeded, monkeypatch):
     assert store._pending == set()
 
 
+def test_header_routes_roundtrip(client):
+    code = _mint(client)["code"]
+    got = client.get("/api/accounts/me", headers={"X-Sync-Code": code})
+    assert got.status_code == 200
+    assert got.json() == {"rev": 1, "state": STATE}
+    newer = {**STATE, "drips": ["2026-07-09"]}
+    r = client.put("/api/accounts/me", headers={"X-Sync-Code": code},
+                   json={"rev": 1, "state": newer})
+    assert r.status_code == 200 and r.json() == {"rev": 2}
+    # no header -> no account, never a 500
+    assert client.get("/api/accounts/me").status_code == 404
+
+
+def test_ftps_failure_raises_instead_of_plaintext(seeded, monkeypatch):
+    class BoomTLS:
+        def __init__(self, timeout=None):
+            pass
+
+        def connect(self, host, port):
+            raise ftplib.error_temp("421 no TLS today")
+
+        def close(self):
+            pass
+
+    plain_used = []
+    monkeypatch.setattr(ftplib, "FTP_TLS", BoomTLS)
+    monkeypatch.setattr(ftplib, "FTP",
+                        lambda *a, **k: plain_used.append(1))
+    with pytest.raises(ftplib.error_temp):
+        store.ftp_connect()
+    assert not plain_used  # never fell back to cleartext
+
+
+def test_restore_bad_blob_does_not_sink_the_rest(seeded, monkeypatch):
+    files = {
+        # alphabetically first and structurally wrong (a list, then a dict
+        # missing keys) — the accounts after them must still restore
+        "GBAAAAAAAAAA.json": json.dumps([1, 2, 3]).encode(),
+        "GBBBBBBBBBBB.json": json.dumps({"rev": 1}).encode(),
+        "GBCCCCCCCCCC.json": json.dumps(
+            {"code": "GBCCCCCCCCCC", "rev": 2, "state": STATE,
+             "updated_at": "2026-07-01T00:00:00Z"}).encode(),
+    }
+    monkeypatch.setattr(store, "ftp_connect", lambda: FakeFTP(files))
+    assert store.restore() == 1
+    conn = db.connect()
+    rows = [r["code"] for r in conn.execute("SELECT code FROM gamba_accounts")]
+    conn.close()
+    assert rows == ["GBCCCCCCCCCC"]
+
+
+class DirFTP(FakeFTP):
+    """FakeFTP with directories: cwd routes nlst/retr at one dir's files."""
+
+    def __init__(self, dirs):
+        super().__init__()
+        self.dirs = dirs
+        self.files = {}
+
+    def cwd(self, d):
+        if d != "/":
+            self.files = self.dirs.setdefault(d, {})
+
+
+def test_restore_adopts_legacy_dir_and_queues_push(seeded, monkeypatch):
+    blob = lambda code, rev, when: json.dumps(  # noqa: E731
+        {"code": code, "rev": rev, "state": STATE, "updated_at": when}).encode()
+    ftp = DirFTP({
+        "prod": {"GBAAAAAAAAAA.json": blob("GBAAAAAAAAAA", 7, "2026-07-08T00:00:00Z")},
+        "staging": {
+            # stale duplicate of the prod account — prod's newer copy must win
+            "GBAAAAAAAAAA.json": blob("GBAAAAAAAAAA", 3, "2026-06-01T00:00:00Z"),
+            # minted during the staging window — must be adopted AND queued
+            # for upload so it gains a prod-dir copy
+            "GBSSSSSSSSSS.json": blob("GBSSSSSSSSSS", 1, "2026-07-07T00:00:00Z"),
+        },
+    })
+    monkeypatch.setattr(store, "ftp_connect", lambda: ftp)
+    monkeypatch.setattr(store, "HOSTINGER_GAMBA_DIR", "prod")
+    monkeypatch.setattr(store, "HOSTINGER_GAMBA_LEGACY_DIRS", ["staging"])
+    monkeypatch.setattr(store, "_drain", lambda: None)  # keep the kick inert
+    assert store.restore() == 2
+    conn = db.connect()
+    rows = {r["code"]: r["rev"] for r in
+            conn.execute("SELECT code, rev FROM gamba_accounts")}
+    conn.close()
+    assert rows == {"GBAAAAAAAAAA": 7, "GBSSSSSSSSSS": 1}
+    assert store._pending == {"GBSSSSSSSSSS"}
+
+
 def test_restore_fills_missing_without_clobbering(seeded, monkeypatch):
     local_state = {**STATE, "drips": ["2026-07-05"]}
     _insert("GBAAAAAAAAAA", 9, local_state)  # local row is newer than the FTP copy
