@@ -125,6 +125,27 @@ def test_run_fixture_gate_and_report(conn, monkeypatch):
     assert all("-" not in d or len(d) != 17 for _, d in calls) or calls == []
 
 
+def test_odds_gate_not_stamped_on_failed_sweep(conn, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    kickoff = (datetime.now(timezone.utc)
+               + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute("INSERT INTO events (id, competition, kickoff_utc, status)"
+                 " VALUES (900001, 'eng.1', ?, 'SCHEDULED')", (kickoff,))
+    conn.commit()
+    monkeypatch.setattr(refresh.espn, "scoreboard", lambda c, s, d: None)
+    monkeypatch.setattr(refresh.odds_api, "enabled", lambda: True)
+    reports = iter([{"error": "events fetch failed"},
+                    {"matched": 1, "bulk": 3, "btts_events": 0}])
+    monkeypatch.setattr(refresh.odds_api, "sweep", lambda c, s, k: next(reports))
+
+    refresh.run(conn)  # failed sweep — the 12h gate must stay open
+    assert conn.execute(
+        "SELECT 1 FROM meta WHERE key='last_fetch:odds:eng.1'").fetchone() is None
+    refresh.run(conn)  # successful sweep — now it stamps
+    assert conn.execute(
+        "SELECT 1 FROM meta WHERE key='last_fetch:odds:eng.1'").fetchone() is not None
+
+
 def test_live_window_open(conn):
     assert refresh.live_window_open(conn) is False
     conn.execute(

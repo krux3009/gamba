@@ -187,7 +187,11 @@ def run(conn) -> dict:
                 and _stale(conn, f"last_fetch:odds:{slug}", ODDS_REFRESH_HOURS)):
             entry["odds"] = odds_api.sweep(
                 conn, slug, COMPETITIONS[slug]["odds_key"])
-            _stamp(conn, f"last_fetch:odds:{slug}")
+            # stamp only a sweep that ran: a failed/skipped one spent nothing,
+            # and locking the 12h gate on it would leave a whole matchday
+            # slate without odds (the fixture gate above works the same way)
+            if not (entry["odds"].get("error") or entry["odds"].get("skipped")):
+                _stamp(conn, f"last_fetch:odds:{slug}")
         report[slug] = entry
     _stamp(conn, "last_refresh")
     return report

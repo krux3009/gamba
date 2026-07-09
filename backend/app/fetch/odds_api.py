@@ -15,6 +15,7 @@ without ODDS_API_KEY. Every response's x-requests-remaining header lands in
 meta('odds_api:remaining') and sweep() refuses to spend below
 ODDS_API_CREDIT_FLOOR, the hard monthly backstop.
 """
+import json
 import statistics
 import time
 import unicodedata
@@ -22,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from .. import db, store
 from ..config import ODDS_API_CREDIT_FLOOR, ODDS_API_KEY, ODDS_BTTS_WINDOW_HOURS
 
 BASE = "https://api.the-odds-api.com/v4"
@@ -45,15 +47,11 @@ def enabled() -> bool:
     return bool(ODDS_API_KEY)
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _log(conn, endpoint: str, params: str, status: int):
     conn.execute(
         "INSERT INTO fetch_log (fetched_at, source, endpoint, params, status)"
         " VALUES (?,?,?,?,?)",
-        (_now(), "odds_api", endpoint, params, status),
+        (db.utc_now_z(), "odds_api", endpoint, params, status),
     )
     conn.commit()
 
@@ -66,22 +64,17 @@ def _get(conn, path: str, label: str, params: dict | None = None) -> list | dict
         _log(conn, path, label, r.status_code)
         remaining = r.headers.get("x-requests-remaining")
         if remaining is not None:
-            conn.execute(
-                "INSERT OR REPLACE INTO meta (key, value)"
-                " VALUES ('odds_api:remaining', ?)", (remaining,))
-            conn.commit()
+            db.meta_set(conn, "odds_api:remaining", remaining)
         r.raise_for_status()
         return r.json()
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):
+        # ValueError covers a 200 with a non-JSON body — same "try next sweep"
         return None
 
 
 def remaining_credits(conn) -> float | None:
-    row = conn.execute(
-        "SELECT value FROM meta WHERE key='odds_api:remaining'"
-    ).fetchone()
     try:
-        return float(row["value"]) if row else None
+        return float(db.meta_get(conn, "odds_api:remaining"))
     except (TypeError, ValueError):
         return None
 
@@ -110,7 +103,7 @@ def match_fixture(conn, competition: str, event: dict) -> tuple[int, int] | None
     then match exactly in either orientation, else by unique token-subset
     ("Man United" ⊆ "Manchester United") — club short forms vary by book."""
     try:
-        commence = datetime.fromisoformat(event["commence_time"].replace("Z", "+00:00"))
+        commence = datetime.fromisoformat(event["commence_time"])
     except (KeyError, ValueError):
         return None
     lo = (commence - timedelta(hours=KICKOFF_TOLERANCE_H)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -187,10 +180,12 @@ def _selection(market: str, outcome_name: str, event: dict, swapped: int) -> str
 def _ingest(conn, event_id: int, event: dict, swapped: int,
             bookmakers: list, markets: tuple) -> int:
     """Replace event_id's rows for the given markets with fresh consensus rows.
+    An EMPTY fresh set still clears the market: when the books pull their
+    quotes (team news), day-old prices must stop being served as bettable.
     Totals keeps half-lines only — quarter/whole lines would need push/half-win
     settlement the fake-credit engine deliberately doesn't model."""
     rows = []
-    fetched_at = _now()
+    fetched_at = db.utc_now_z()
     for (market, name, line), agg in _consensus(bookmakers).items():
         if market not in markets:
             continue
@@ -201,19 +196,18 @@ def _ingest(conn, event_id: int, event: dict, swapped: int,
             continue
         rows.append((event_id, market, sel, line if market == "totals" else 0,
                      agg["median"], agg["best"], agg["book"], agg["n"], fetched_at))
-    if not rows:
-        return 0
     conn.executemany(
         "DELETE FROM market_odds WHERE event_id=? AND market=?",
         [(event_id, mk) for mk in markets],
     )
-    conn.executemany(
-        """INSERT OR REPLACE INTO market_odds
-           (event_id, market, selection, line, price_median, price_best,
-            book_best, n_books, fetched_at)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        rows,
-    )
+    if rows:
+        conn.executemany(
+            """INSERT OR REPLACE INTO market_odds
+               (event_id, market, selection, line, price_median, price_best,
+                book_best, n_books, fetched_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            rows,
+        )
     conn.commit()
     return len(rows)
 
@@ -223,6 +217,27 @@ def _has_btts(conn, event_id: int) -> bool:
         "SELECT 1 FROM market_odds WHERE event_id=? AND market='btts' LIMIT 1",
         (event_id,),
     ).fetchone() is not None
+
+
+# The "once per event ever" btts guard must survive Render's disk wipe, or
+# every deploy inside the 48h window re-buys the whole matchweek (and events
+# no book quotes re-buy every sweep — a credit is spent even when the response
+# carries no btts prices). Ledger = event ids in meta, mirrored to the FTP
+# store the accounts already use. Ids are ints (~760/season): never pruned.
+
+def _btts_attempted(conn) -> set[int]:
+    raw = db.meta_get(conn, "btts:attempted")
+    if raw is None:  # cold boot — pull the mirror before spending anything
+        ids = store.load_meta_blob("btts_attempted") or []
+        db.meta_set(conn, "btts:attempted", json.dumps(ids))
+        return set(ids)
+    return set(json.loads(raw))
+
+
+def _mark_btts_attempted(conn, attempted: set[int]) -> None:
+    ids = sorted(attempted)
+    db.meta_set(conn, "btts:attempted", json.dumps(ids))
+    store.save_meta_blob("btts_attempted", ids)
 
 
 def sweep(conn, competition: str, sport_key: str) -> dict:
@@ -256,23 +271,34 @@ def sweep(conn, competition: str, sport_key: str) -> dict:
     bulk = _get(conn, f"sports/{sport_key}/odds", f"bulk:{competition}",
                 {"regions": REGIONS, "markets": "h2h,totals",
                  "oddsFormat": "decimal"})
-    for ev in bulk or []:
-        hit = mapping.get(ev.get("id"))
-        if hit:
-            event_id, swapped, _ = hit
-            report["bulk"] += _ingest(conn, event_id, ev, swapped,
-                                      ev.get("bookmakers", []), ("h2h", "totals"))
+    if bulk is not None:
+        seen = set()
+        for ev in bulk:
+            hit = mapping.get(ev.get("id"))
+            if hit:
+                seen.add(ev["id"])
+                event_id, swapped, _ = hit
+                report["bulk"] += _ingest(conn, event_id, ev, swapped,
+                                          ev.get("bookmakers", []),
+                                          ("h2h", "totals"))
+        # a matched event the books dropped from the odds feed entirely:
+        # clear its stale quotes too — same rule as an empty bookmaker list
+        for pid, (event_id, swapped, ev) in mapping.items():
+            if pid not in seen:
+                _ingest(conn, event_id, ev, swapped, [], ("h2h", "totals"))
 
-    # btts: per-event endpoint only. Spend a credit just once per event, only
-    # near kickoff; re-check the floor as the loop spends.
+    # btts: per-event endpoint only. Spend a credit just once per event EVER
+    # (durable ledger), only near kickoff; re-check the floor as the loop spends.
     horizon = (datetime.now(timezone.utc)
                + timedelta(hours=ODDS_BTTS_WINDOW_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    attempted = _btts_attempted(conn)
+    dirty = False
     for pid, (event_id, swapped, ev) in mapping.items():
         row = conn.execute(
             "SELECT kickoff_utc FROM events WHERE id=?", (event_id,)).fetchone()
-        if not row or not (_now() < row["kickoff_utc"] <= horizon):
+        if not row or not (db.utc_now_z() < row["kickoff_utc"] <= horizon):
             continue
-        if _has_btts(conn, event_id):
+        if event_id in attempted or _has_btts(conn, event_id):
             continue  # once per event ever — the budget depends on this
         left = remaining_credits(conn)
         if left is not None and left < ODDS_API_CREDIT_FLOOR:
@@ -282,11 +308,17 @@ def sweep(conn, competition: str, sport_key: str) -> dict:
                        f"btts:{event_id}",
                        {"regions": REGIONS, "markets": "btts",
                         "oddsFormat": "decimal"})
-        if payload:
+        if payload is not None:
+            # the credit is spent even when no book quotes btts — mark the
+            # ATTEMPT, or unquoted events re-buy every sweep for 48 hours
+            attempted.add(event_id)
+            dirty = True
             report["btts_events"] += bool(
                 _ingest(conn, event_id, ev, swapped,
                         payload.get("bookmakers", []), ("btts",)))
         time.sleep(1.0)
+    if dirty:
+        _mark_btts_attempted(conn, attempted)
 
     report["remaining"] = remaining_credits(conn)
     if not report["unmatched"]:

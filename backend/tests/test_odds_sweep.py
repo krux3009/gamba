@@ -163,6 +163,80 @@ def test_sweep_credit_floor_halts_btts_midway(conn, monkeypatch):
     assert report["halted"] == "credit floor"
 
 
+def test_btts_marked_on_attempt_even_when_unquoted(conn, monkeypatch):
+    # the credit is spent on the HTTP call; a response with no btts quotes
+    # must still count as "bought" or the event re-buys every sweep for 48h
+    ev = _provider_event("prov1", "Manchester United", "Arsenal")
+    responses = {
+        "sports/soccer_epl/events": [ev],
+        "sports/soccer_epl/odds": [],
+        "/events/prov1/odds": {**ev, "bookmakers": []},  # nobody quotes btts
+    }
+    fake = _fake_get(responses)
+    monkeypatch.setattr(odds_api, "_get", fake)
+    report = odds_api.sweep(conn, "eng.1", "soccer_epl")
+    assert report["btts_events"] == 0
+
+    fake.calls.clear()
+    odds_api.sweep(conn, "eng.1", "soccer_epl")
+    assert not any("/events/prov1/odds" in p for p in fake.calls)
+
+
+def test_btts_ledger_restores_from_ftp_mirror(conn, monkeypatch):
+    # cold boot: meta is wiped with the disk; the FTP mirror must stop a re-buy
+    monkeypatch.setattr(odds_api.store, "load_meta_blob",
+                        lambda name: [700001])
+    ev = _provider_event("prov1", "Manchester United", "Arsenal")
+    fake = _fake_get({"sports/soccer_epl/events": [ev],
+                      "sports/soccer_epl/odds": []})
+    monkeypatch.setattr(odds_api, "_get", fake)
+    report = odds_api.sweep(conn, "eng.1", "soccer_epl")
+    assert report["btts_events"] == 0
+    assert not any("/odds" in p and "events/" in p.rsplit("sports/", 1)[-1]
+                   for p in fake.calls if p.endswith("prov1/odds"))
+
+
+def test_pulled_quotes_clear_stale_rows(conn, monkeypatch):
+    ev = _provider_event("prov1", "Manchester United", "Arsenal")
+    with_odds = {
+        "sports/soccer_epl/events": [ev],
+        "sports/soccer_epl/odds": [{**ev, "bookmakers": [_book("h2h", [
+            {"name": "Manchester United", "price": 2.1},
+            {"name": "Draw", "price": 3.4},
+            {"name": "Arsenal", "price": 3.5}])]}],
+    }
+    monkeypatch.setattr(odds_api, "_get", _fake_get(with_odds))
+    odds_api.sweep(conn, "eng.1", "soccer_epl")
+    n = conn.execute("SELECT COUNT(*) AS n FROM market_odds").fetchone()["n"]
+    assert n == 3
+
+    # books pull every quote (team news): the event comes back with no
+    # bookmakers — yesterday's prices must not stay bettable
+    pulled = {**with_odds,
+              "sports/soccer_epl/odds": [{**ev, "bookmakers": []}]}
+    monkeypatch.setattr(odds_api, "_get", _fake_get(pulled))
+    odds_api.sweep(conn, "eng.1", "soccer_epl")
+    n = conn.execute("SELECT COUNT(*) AS n FROM market_odds").fetchone()["n"]
+    assert n == 0
+
+
+def test_event_absent_from_bulk_clears_stale_rows(conn, monkeypatch):
+    ev = _provider_event("prov1", "Manchester United", "Arsenal")
+    conn.execute(
+        """INSERT INTO market_odds (event_id, market, selection, line,
+             price_median, price_best, book_best, n_books, fetched_at)
+           VALUES (700001, 'h2h', 'home', 0, 2.0, 2.1, 'OldBook', 3,
+                   '2026-07-01T00:00:00Z')""")
+    conn.commit()
+    # bulk succeeds but the event vanished from the odds feed entirely
+    monkeypatch.setattr(odds_api, "_get", _fake_get({
+        "sports/soccer_epl/events": [ev],
+        "sports/soccer_epl/odds": []}))
+    odds_api.sweep(conn, "eng.1", "soccer_epl")
+    assert conn.execute("SELECT COUNT(*) AS n FROM market_odds"
+                        ).fetchone()["n"] == 0
+
+
 def test_totals_half_lines_only(conn, monkeypatch):
     ev = _provider_event("prov1", "Manchester United", "Arsenal")
     monkeypatch.setattr(odds_api, "_get", _fake_get({
