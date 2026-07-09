@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS events (
   home_ext_id   TEXT,                       -- ESPN team ids; the client voids a
   away_ext_id   TEXT,                       -- bet if the fixture's teams change
   kickoff_utc   TEXT NOT NULL,
-  status        TEXT DEFAULT 'SCHEDULED',   -- 'SCHEDULED' | 'LIVE' | 'FT'
+  status        TEXT DEFAULT 'SCHEDULED',   -- 'SCHEDULED'|'LIVE'|'FT'|'CANCELED'
   home_score    INTEGER,                    -- soccer: FT score (leagues have no
   away_score    INTEGER,                    -- extra time); esports later: maps won
   format        TEXT                        -- NULL for soccer; 'bo1'/'bo3'/'bo5'

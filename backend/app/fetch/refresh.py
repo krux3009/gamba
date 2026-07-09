@@ -12,11 +12,13 @@ pass — lands with PR3.
 """
 from datetime import datetime, timedelta, timezone
 
+from .. import db
 from ..config import COMPETITIONS, ODDS_REFRESH_HOURS
 from . import espn, odds_api
 
 FIXTURE_HORIZON_DAYS = 14
 FIXTURE_REFRESH_HOURS = 24
+BACKFILL_DAYS = 90  # cold-boot score reach — covers the oldest realistic open bet
 
 
 def _now():
@@ -65,12 +67,26 @@ def ingest_scoreboard(conn, slug: str, payload: dict) -> int:
             comp = event["competitions"][0]
             sides = {c["homeAway"]: c for c in comp["competitors"]}
             home, away = sides["home"], sides["away"]
-            state = ((comp.get("status") or event.get("status") or {})
-                     .get("type") or {}).get("state")
-            status = {"pre": "SCHEDULED", "in": "LIVE", "post": "FT"}.get(state)
-            if status is None:
+            stype = ((comp.get("status") or event.get("status") or {})
+                     .get("type") or {})
+            state = stype.get("state")
+            # 'post' is NOT finished: ESPN marks canceled/postponed fixtures
+            # 'post' with completed=False and placeholder '0' scores that must
+            # never settle as a real 0-0. Only completed==True is final.
+            if state == "pre":
+                status = "SCHEDULED"
+            elif state == "in":
+                status = "LIVE"
+            elif state == "post" and stype.get("completed"):
+                status = "FT"
+            elif state == "post" and stype.get("name") in (
+                    "STATUS_CANCELED", "STATUS_ABANDONED"):
+                status = "CANCELED"  # client voids these bets: stake back
+            elif state == "post":
+                status = "SCHEDULED"  # postponed — the feed re-dates it later
+            else:
                 continue
-            started = status != "SCHEDULED"
+            started = status in ("LIVE", "FT")
             conn.execute(
                 """INSERT INTO events (id, sport, competition, home_name, away_name,
                      home_ext_id, away_ext_id, kickoff_utc, status, home_score, away_score)
@@ -104,7 +120,7 @@ def _needs_scores(conn, slug: str) -> bool:
     off-season and between matchdays this keeps the loop to zero ESPN calls."""
     return conn.execute(
         """SELECT 1 FROM events
-           WHERE competition = ? AND status != 'FT'
+           WHERE competition = ? AND status NOT IN ('FT', 'CANCELED')
              AND datetime(kickoff_utc) <= datetime('now', '+12 hours')
              AND datetime(kickoff_utc) >= datetime('now', '-2 days')
            LIMIT 1""",
@@ -117,6 +133,17 @@ def run(conn) -> dict:
     today = _now().date()
     for slug in COMPETITIONS:
         entry = {}
+        # 0. cold boot (disk wipe): one deep score pass, so FT events older
+        # than the recent window get their ids back into /api/events — an open
+        # bet on a missing event can never settle or void. The stamp lives in
+        # meta (wiped with the disk), so this runs once per boot, not per pass.
+        if db.meta_get(conn, f"backfill:scores:{slug}") is None:
+            dates = (f"{today - timedelta(days=BACKFILL_DAYS):%Y%m%d}"
+                     f"-{today:%Y%m%d}")
+            payload = espn.scoreboard(conn, slug, dates)
+            if payload is not None:
+                entry["backfill"] = ingest_scoreboard(conn, slug, payload)
+                _stamp(conn, f"backfill:scores:{slug}")
         # 1. fixture horizon, once per 24h per competition
         if _stale(conn, f"last_fetch:fixtures:{slug}", FIXTURE_REFRESH_HOURS):
             dates = f"{today:%Y%m%d}-{today + timedelta(days=FIXTURE_HORIZON_DAYS):%Y%m%d}"
@@ -130,19 +157,23 @@ def run(conn) -> dict:
             payload = espn.scoreboard(conn, slug, dates)
             if payload is not None:
                 entry["scores"] = ingest_scoreboard(conn, slug, payload)
-        # 3. stale-day pass: an event still not FT long after kickoff was
+        # 3. stale-day pass: an event still undecided long after kickoff was
         # postponed or abandoned — re-fetch its day so the feed's correction
-        # (new date or final score) lands. Bounded to a handful of days.
+        # (new date or final score) lands. Bounded to a handful of days and
+        # meta-gated to every 6h: an event ESPN silently dropped from its feed
+        # would otherwise re-qualify on every 75s live tick, forever.
         stale_days = [r["d"] for r in conn.execute(
             """SELECT DISTINCT date(kickoff_utc) AS d FROM events
-               WHERE competition = ? AND status != 'FT'
+               WHERE competition = ? AND status NOT IN ('FT', 'CANCELED')
                  AND datetime(kickoff_utc) < datetime('now', '-6 hours')
                ORDER BY d LIMIT 5""", (slug,))]
-        for d in stale_days:
-            payload = espn.scoreboard(conn, slug, d.replace("-", ""))
-            if payload is not None:
-                entry.setdefault("stale", 0)
-                entry["stale"] += ingest_scoreboard(conn, slug, payload)
+        if stale_days and _stale(conn, f"last_fetch:staleday:{slug}", 6):
+            for d in stale_days:
+                payload = espn.scoreboard(conn, slug, d.replace("-", ""))
+                if payload is not None:
+                    entry.setdefault("stale", 0)
+                    entry["stale"] += ingest_scoreboard(conn, slug, payload)
+            _stamp(conn, f"last_fetch:staleday:{slug}")
         # 4. odds sweep: meta-gated to 2/day per competition, skipped entirely
         # when nothing is bettable within 8 days (international breaks and the
         # off-season cost zero credits)

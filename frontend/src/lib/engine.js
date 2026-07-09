@@ -44,15 +44,22 @@ function outcome(bet, h, a) {
       return bet.selection === final;
     }
     default:
-      return false;
+      // unknown market — a newer SPA placed it; guessing here would
+      // confiscate the stake, so signal "can't judge" and let settleBet void
+      return null;
   }
 }
 
 // One bet against one event row from /api/events.
 // Returns the settled bet, or null when it can't settle yet.
 export function settleBet(bet, match) {
-  if (!match || match.status !== "FT") return null;
+  if (!match) return null;
   const settledAt = new Date().toISOString();
+  // canceled/abandoned fixture: the bet's premise is gone — stake back
+  if (match.status === "CANCELED") {
+    return { ...bet, status: "void", returns: bet.stake, settledAt };
+  }
+  if (match.status !== "FT") return null;
   const h = match.home_goals_90;
   const a = match.away_goals_90;
   // void (stake back): no final score recorded, or the fixture's teams changed
@@ -64,6 +71,9 @@ export function settleBet(bet, match) {
     return { ...bet, status: "void", returns: bet.stake, settledAt };
   }
   const won = outcome(bet, h, a);
+  if (won == null) {
+    return { ...bet, status: "void", returns: bet.stake, settledAt };
+  }
   return {
     ...bet,
     status: won ? "won" : "lost",

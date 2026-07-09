@@ -5,18 +5,28 @@ from app.fetch import refresh
 
 
 def _event(eid, date="2026-08-15T14:00Z", state="pre", home="Arsenal", away="Leeds United",
-           hid="359", aid="357", hscore=None, ascore=None):
+           hid="359", aid="357", hscore=None, ascore=None,
+           completed=None, name=None):
     def side(ha, team, tid, score):
         d = {"homeAway": ha, "team": {"displayName": team, "id": tid}}
         if score is not None:
             d["score"] = str(score)
         return d
+    stype = {"state": state}
+    # mirror the live feed: a finished match carries completed=True; canceled/
+    # postponed fixtures are 'post' with completed=False and a status name
+    if completed is None and state == "post" and name is None:
+        completed = True
+    if completed is not None:
+        stype["completed"] = completed
+    if name is not None:
+        stype["name"] = name
     return {
         "id": str(eid),
         "date": date,
         "competitions": [{
             "competitors": [side("home", home, hid, hscore), side("away", away, aid, ascore)],
-            "status": {"type": {"state": state}},
+            "status": {"type": stype},
         }],
     }
 
@@ -64,6 +74,27 @@ def test_ingest_moved_kickoff_updates_in_place(conn):
     assert _row(conn, 700001)["kickoff_utc"] == "2026-08-17T19:00:00Z"
 
 
+def test_ingest_canceled_never_settles_as_ft(conn):
+    # LIVE-VERIFIED shape: canceled fixtures come back state='post',
+    # completed=False, name='STATUS_CANCELED', with placeholder '0' scores
+    refresh.ingest_scoreboard(conn, "eng.1", {"events": [_event(700001)]})
+    refresh.ingest_scoreboard(conn, "eng.1", {"events": [
+        _event(700001, state="post", completed=False, name="STATUS_CANCELED",
+               hscore=0, ascore=0)]})
+    row = _row(conn, 700001)
+    assert row["status"] == "CANCELED"
+    assert row["home_score"] is None and row["away_score"] is None
+
+
+def test_ingest_postponed_stays_scheduled(conn):
+    refresh.ingest_scoreboard(conn, "eng.1", {"events": [
+        _event(700001, state="post", completed=False, name="STATUS_POSTPONED",
+               hscore=0, ascore=0)]})
+    row = _row(conn, 700001)
+    assert row["status"] == "SCHEDULED"  # the feed re-dates it later
+    assert row["home_score"] is None
+
+
 def test_ingest_malformed_event_skipped(conn):
     n = refresh.ingest_scoreboard(conn, "eng.1", {"events": [
         {"id": "junk"},                       # no competitions
@@ -83,8 +114,10 @@ def test_run_fixture_gate_and_report(conn, monkeypatch):
     monkeypatch.setattr(refresh.espn, "scoreboard", fake_scoreboard)
     report = refresh.run(conn)
     assert set(report) == set(config.COMPETITIONS)
-    fixture_calls = [c for c in calls if "-" in c[1] and len(c[1]) == 17]
-    assert len(fixture_calls) == len(config.COMPETITIONS)
+    # two date-range calls per competition: the one-per-boot score backfill
+    # plus the 24h fixture horizon
+    range_calls = [c for c in calls if "-" in c[1] and len(c[1]) == 17]
+    assert len(range_calls) == 2 * len(config.COMPETITIONS)
     # second run inside the 24h gate: no new fixture calls (scores gated off —
     # the seeded kickoffs are outside the recent window)
     calls.clear()

@@ -18,7 +18,7 @@ LIST_SQL = """
          home_ext_id AS home_id, away_ext_id AS away_id,
          kickoff_utc, status
     FROM events
-   WHERE status != 'FT'
+   WHERE status NOT IN ('FT', 'CANCELED')
    ORDER BY kickoff_utc, id
 """
 
