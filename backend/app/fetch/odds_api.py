@@ -25,6 +25,7 @@ import httpx
 
 from .. import db, store
 from ..config import ODDS_API_CREDIT_FLOOR, ODDS_API_KEY, ODDS_BTTS_WINDOW_HOURS
+from . import log_fetch
 
 BASE = "https://api.the-odds-api.com/v4"
 REGIONS = "eu"  # 1x credit multiplier
@@ -47,21 +48,12 @@ def enabled() -> bool:
     return bool(ODDS_API_KEY)
 
 
-def _log(conn, endpoint: str, params: str, status: int):
-    conn.execute(
-        "INSERT INTO fetch_log (fetched_at, source, endpoint, params, status)"
-        " VALUES (?,?,?,?,?)",
-        (db.utc_now_z(), "odds_api", endpoint, params, status),
-    )
-    conn.commit()
-
-
 def _get(conn, path: str, label: str, params: dict | None = None) -> list | dict | None:
     try:
         r = httpx.get(f"{BASE}/{path}",
                       params={"apiKey": ODDS_API_KEY, **(params or {})},
                       timeout=TIMEOUT)
-        _log(conn, path, label, r.status_code)
+        log_fetch(conn, "odds_api", path, label, r.status_code)
         remaining = r.headers.get("x-requests-remaining")
         if remaining is not None:
             db.meta_set(conn, "odds_api:remaining", remaining)

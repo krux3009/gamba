@@ -5,8 +5,6 @@ Settlement deliberately does NOT use this endpoint — the frontend settles bets
 against /api/events scores — so this document can lag or vanish without
 corrupting anyone's (fake) balance.
 """
-from datetime import datetime, timezone
-
 from fastapi import APIRouter
 
 from .. import db
@@ -21,6 +19,20 @@ LIST_SQL = """
    WHERE status NOT IN ('FT', 'CANCELED')
    ORDER BY kickoff_utc, id
 """
+
+# only rows for still-listed events: FT rows are never pruned, so a bare
+# SELECT * would grow all season and rebuild thousands of dead rows per poll
+ODDS_SQL = """
+  SELECT market_odds.* FROM market_odds
+  JOIN events ON events.id = market_odds.event_id
+ WHERE events.status NOT IN ('FT', 'CANCELED')
+"""
+
+# The document only changes when a refresh cycle writes, but every open tab
+# polls it each 60s — cache the built doc keyed on the last_refresh stamp.
+# generated_at IS that stamp, so identical content stays byte-identical and
+# the client can skip re-renders with a plain string compare.
+_cache = {"stamp": None, "doc": None}
 
 
 def _row(r: dict) -> dict:
@@ -53,8 +65,11 @@ def _real_book(rows: list[dict]) -> dict | None:
 def list_odds():
     conn = db.connect()
     try:
+        stamp = db.meta_get(conn, "last_refresh")
+        if stamp is not None and stamp == _cache["stamp"]:
+            return _cache["doc"]
         rows = conn.execute(LIST_SQL).fetchall()
-        odds_rows = conn.execute("SELECT * FROM market_odds").fetchall()
+        odds_rows = conn.execute(ODDS_SQL).fetchall()
     finally:
         conn.close()
 
@@ -62,10 +77,13 @@ def list_odds():
     for r in odds_rows:
         real_by_event.setdefault(r["event_id"], []).append(r)
 
-    return {
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    doc = {
+        "generated_at": stamp or db.utc_now_z(),
         "matches": [
             {**m, "real": _real_book(real_by_event.get(m["id"], []))}
             for m in rows
         ],
     }
+    if stamp is not None:  # pre-first-refresh docs are never cached
+        _cache.update(stamp=stamp, doc=doc)
+    return doc

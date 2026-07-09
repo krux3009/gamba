@@ -46,12 +46,12 @@ def _check(key: str):
 
 
 @router.get("/api/internal/refresh")
-def refresh(key: str = "", async_: int = Query(0, alias="async")):
+def refresh(key: str = "", async_: int = Query(1, alias="async")):
+    """Background refresh by default: a slow ESPN day can take minutes, and a
+    30s-timeout cron caller aborting mid-cycle just retries into a hung pile.
+    ?async=0 keeps the synchronous report for hands-on ops."""
     _check(key)
     if async_:
-        # Pinger path: run the refresh in a background thread and return an
-        # instant, tiny 200 — cron-job.org has a ~30s timeout, and the quick
-        # request keeps the Render free instance warm.
         threading.Thread(target=refresh_locked, daemon=True).start()
         return {"started": True}
     report = refresh_locked()
@@ -77,17 +77,8 @@ def odds_sweep(key: str = ""):
 @router.get("/api/internal/restore")
 def restore(key: str = ""):
     """Re-run the FTP account restore. Cutover tool: picks up blobs written by
-    pitchside after this instance last booted (stragglers still playing there)."""
+    pitchside after this instance last booted (stragglers still playing there).
+    Fire-and-forget; watch db_accounts on /api/health for the result."""
     _check(key)
-    done = threading.Event()
-    result: dict = {}
-
-    def _run():
-        result["inserted"] = store.restore()
-        done.set()
-
-    threading.Thread(target=_run, daemon=True).start()
-    # restore is bounded (MAX_ACCOUNTS blobs) but FTP can be slow; give the
-    # caller a quick answer if it finishes fast, else let it run detached.
-    finished = done.wait(timeout=20)
-    return {"finished": finished, "inserted": result.get("inserted")}
+    threading.Thread(target=store.restore, daemon=True).start()
+    return {"started": True}

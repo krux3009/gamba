@@ -26,20 +26,14 @@ def _now():
 
 
 def _stamp(conn, key: str):
-    conn.execute(
-        "INSERT INTO meta (key, value) VALUES (?, ?)"
-        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (key, _now().isoformat()),
-    )
-    conn.commit()
+    db.meta_set(conn, key, db.utc_now_z())
 
 
 def _stale(conn, key: str, hours: float) -> bool:
-    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
-    if not row:
+    value = db.meta_get(conn, key)
+    if value is None:
         return True
-    then = datetime.fromisoformat(row["value"])
-    return _now() - then >= timedelta(hours=hours)
+    return _now() - datetime.fromisoformat(value) >= timedelta(hours=hours)
 
 
 def ingest_scoreboard(conn, slug: str, payload: dict) -> int:
